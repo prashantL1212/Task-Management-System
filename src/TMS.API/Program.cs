@@ -12,6 +12,20 @@ using TMS.Shared.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
+const string CorsPolicy = "DefaultCorsPolicy";
+
+// CORS: allow the SPA dev/prod origins (configurable via "Cors:AllowedOrigins").
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:5173" };
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(CorsPolicy, policy =>
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod());
+});
+
 // MVC controllers + standardized ApiResponse for validation (400) failures.
 builder.Services
     .AddControllers()
@@ -65,6 +79,8 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+app.UseCors(CorsPolicy);
 
 app.UseAuthentication();
 app.UseAuthorization();
