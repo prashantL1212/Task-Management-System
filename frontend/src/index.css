@@ -330,6 +330,32 @@ h2 {
   gap: 10px;
 }
 
+/* ---------- Filters ---------- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.filters__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+}
+
+.filters__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.filters__clear {
+  align-self: flex-end;
+}
+
 /* ---------- Task form ---------- */
 .task-form {
   background: var(--surface);

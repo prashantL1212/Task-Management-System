@@ -21,7 +21,7 @@ export default function Layout() {
         <span className="app-header__brand">Task Management System</span>
         <div className="app-header__right">
           {username && <span className="app-header__user">Signed in as {username}</span>}
-          <button type="button" className="btn btn--ghost" onClick={handleLogout}>
+          <button type="button" className="btn btn--danger" onClick={handleLogout}>
             Logout
           </button>
         </div>

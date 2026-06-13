@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { usePagination } from '../hooks/usePagination';
 import { deleteTask } from '../api/taskApi';
 import { TASKS_PER_PAGE } from '../utils/constants';
 import SummaryCards from '../components/SummaryCards';
+import TaskFilters from '../components/TaskFilters';
 import TaskTable from '../components/TaskTable';
 import TaskForm from '../components/TaskForm';
 import EditTaskModal from '../components/EditTaskModal';
@@ -11,19 +12,34 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import Pagination from '../components/Pagination';
 
 export default function DashboardPage() {
-  const { tasks, summary, loading, error, reload } = useDashboardData();
+  // Filters: '' = no filter. Kept as strings for the <select> bindings.
+  const [statusFilter, setStatusFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('');
+
+  // Stable filters object for the data hook (only changes when a filter changes).
+  const filters = useMemo(() => {
+    const next = {};
+    if (statusFilter !== '') next.status = Number(statusFilter);
+    if (priorityFilter !== '') next.priority = Number(priorityFilter);
+    return next;
+  }, [statusFilter, priorityFilter]);
+
+  const { tasks, summary, loading, error, reload } = useDashboardData(filters);
 
   const [showForm, setShowForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-
   const [editingTask, setEditingTask] = useState(null);
-
   const [deletingTask, setDeletingTask] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
-  // Client-side pagination over the loaded tasks (10 per page).
+  // Pagination over the (filtered) tasks, 7 per page.
   const { page, setPage, totalPages, pageItems } = usePagination(tasks, TASKS_PER_PAGE);
+
+  // Reset to page 1 whenever the filters change.
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, priorityFilter, setPage]);
 
   const rangeStart = tasks.length === 0 ? 0 : (page - 1) * TASKS_PER_PAGE + 1;
   const rangeEnd = Math.min(page * TASKS_PER_PAGE, tasks.length);
@@ -36,7 +52,7 @@ export default function DashboardPage() {
   const handleCreated = (task) => {
     setShowForm(false);
     setSuccessMessage(`Task "${task.title}" created.`);
-    setPage(1); // newest task sorts to the top, so jump to page 1 to show it
+    setPage(1);
     reload();
   };
 
@@ -67,6 +83,13 @@ export default function DashboardPage() {
     }
   };
 
+  const clearFilters = () => {
+    setStatusFilter('');
+    setPriorityFilter('');
+  };
+
+  const initialLoading = loading && summary === null;
+
   return (
     <section className="page">
       <div className="page__header">
@@ -89,15 +112,15 @@ export default function DashboardPage() {
 
       {showForm && <TaskForm onSuccess={handleCreated} onCancel={() => setShowForm(false)} />}
 
-      {loading && <p className="page__text">Loading dashboard…</p>}
-
-      {error && !loading && (
+      {error && (
         <div className="alert alert--error" role="alert">
           <p className="alert__message">{error}</p>
         </div>
       )}
 
-      {!loading && !error && (
+      {initialLoading && <p className="page__text">Loading dashboard…</p>}
+
+      {summary !== null && (
         <>
           <SummaryCards summary={summary} />
 
@@ -109,6 +132,15 @@ export default function DashboardPage() {
               </span>
             )}
           </div>
+
+          <TaskFilters
+            status={statusFilter}
+            priority={priorityFilter}
+            onStatusChange={setStatusFilter}
+            onPriorityChange={setPriorityFilter}
+            onClear={clearFilters}
+            disabled={loading}
+          />
 
           <TaskTable tasks={pageItems} onEdit={setEditingTask} onDelete={openDelete} />
           <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
