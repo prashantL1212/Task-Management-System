@@ -1,0 +1,8 @@
+# Auto-merged by `docker compose up` for local development.
+# Runs the API in the Development environment so EF migrations are applied
+# AND the idempotent dev seeder runs (admin user + sample tasks) inside the
+# container — giving an immediately usable demo stack.
+services:
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development

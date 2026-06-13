@@ -1,0 +1,1732 @@
+Read PROJECT-SCOPE.md completely and based on the requirement 
+  provide me the recommend solution structure ,project          
+  structure, database tables and                                
+  relationship,endpoint,authentication design , react           
+  application structure, unit testing strategy, and docker      
+  strategy do not generate code yet first i want to finalize    
+  the architecture before implementing.                         
+  
+● Based on a complete read of project-scope.md, here's my
+  recommended architecture. No code — this is for you to review
+  and finalize first.
+
+  ---
+  1. Solution Structure (.NET 8 — Clean Architecture)
+
+  TaskManagementSystem.sln
+  │
+  ├── src/
+  │   ├── TMS.Domain/              # Core — no dependencies
+  │   ├── TMS.Application/         # Depends on Domain
+  │   ├── TMS.Infrastructure/      # Depends on Application +
+  Domain
+  │   ├── TMS.API/                 # Depends on Application +
+  Infrastructure (composition root)
+  │   └── TMS.Shared/              # .NET Standard 2.0 lib
+  (bonus) — referenced by all
+  │
+  ├── tests/
+  │   └── TMS.Application.Tests/   # xUnit + Moq +
+  FluentAssertions
+  │
+  ├── client/                     # React SPA
+  │
+  ├── docker-compose.yml
+  └── README.md
+
+  Dependency rule (enforces Clean Architecture): API →
+  Infrastructure → Application → Domain. Domain knows nothing
+  about the outside; Application defines interfaces,
+  Infrastructure implements them. The TMS.Shared .NET Standard
+  library holds cross-cutting contracts (API response envelope,
+  enums, constants) so both the API and — conceptually — any
+  future .NET consumer can reuse them.
+
+  Layer responsibilities
+
+  Layer: Domain
+  Contains: TaskItem, User entities; TaskStatus, TaskPriority
+    enums; domain invariants. No EF/framework refs.
+  ────────────────────────────────────────
+  Layer: Application
+  Contains: DTOs, ITaskService/IAuthService, service
+    implementations, validators (FluentValidation), repository
+    interfaces (ITaskRepository), IJwtTokenGenerator interface.
+  ────────────────────────────────────────
+  Layer: Infrastructure
+  Contains: AppDbContext, EF entity configurations, migrations,
+    seed data, repository implementations, JWT token generator,
+    password hasher.
+  ────────────────────────────────────────
+  Layer: API
+  Contains: Controllers, middleware (exception handling, request
+
+    logging), JWT auth setup, Swagger, DI registration.
+  ────────────────────────────────────────
+  Layer: Shared
+  Contains: ApiResponse<T> envelope, shared enums/constants.
+
+  ▎ Design decision to confirm: The scope lists both a
+  ▎ Repository layer and EF Core. I recommend Repository +
+  ▎ Service (repository wraps DbContext, service holds business
+  ▎ logic). The alternative — services using DbContext directly
+  ▎ — is simpler but the scope explicitly calls for "Repository
+  ▎ Implementations" in Infrastructure, so I'm proposing
+  ▎ repositories.
+
+  ---
+  2. Database — Tables & Relationships
+
+  Engine: SQL Server LocalDB · Strategy: EF Core Code First +
+  Migrations + Seed.
+
+  Users
+
+  ┌──────────────┬─────────────────┬────────────────────────┐
+  │    Column    │      Type       │         Notes          │
+  ├──────────────┼─────────────────┼────────────────────────┤
+  │ Id           │ int (PK,        │                        │
+  │              │ identity)       │                        │
+  ├──────────────┼─────────────────┼────────────────────────┤
+  │ Username     │ nvarchar(50)    │ unique index           │
+  ├──────────────┼─────────────────┼────────────────────────┤
+  │ PasswordHash │ nvarchar(max)   │ BCrypt/PBKDF2 hash —   │
+  │              │                 │ never plaintext        │
+  ├──────────────┼─────────────────┼────────────────────────┤
+  │ Role         │ nvarchar(20)    │ e.g. Admin             │
+  ├──────────────┼─────────────────┼────────────────────────┤
+  │ CreatedAt    │ datetime2       │                        │
+  └──────────────┴─────────────────┴────────────────────────┘
+
+  Tasks
+
+  ┌──────────────────┬────────────────┬─────────────────────┐
+  │      Column      │      Type      │        Notes        │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ Id               │ int (PK,       │                     │
+  │                  │ identity)      │                     │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ Title            │ nvarchar(200)  │ required            │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ Description      │ nvarchar(max)  │ nullable            │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │                  │                │ enum: ToDo=0,       │
+  │ Status           │ int            │ InProgress=1,       │
+  │                  │                │ Done=2              │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │                  │                │ enum: Low=0,        │
+  │ Priority         │ int            │ Medium=1, High=2,   │
+  │                  │                │ Critical=3          │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ AssignedToUserId │ int (FK →      │ nullable            │
+  │                  │ Users.Id)      │                     │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ IsDeleted        │ bit            │ soft delete flag,   │
+  │                  │                │ default 0           │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ CreatedAt        │ datetime2      │                     │
+  ├──────────────────┼────────────────┼─────────────────────┤
+  │ UpdatedAt        │ datetime2      │ nullable            │
+  └──────────────────┴────────────────┴─────────────────────┘
+
+  Relationship
+
+  - Users 1 ──< Tasks (one user assigned to many tasks) via
+  AssignedToUserId. OnDelete: Restrict (don't cascade-delete
+  tasks when a user is removed).
+  - Soft delete: global query filter HasQueryFilter(t =>
+  !t.IsDeleted) so deleted tasks are invisible to all normal
+  queries automatically.
+
+  ▎ Decision to confirm: Store enums as int (compact,
+  ▎ scope-aligned) vs. string (readable in DB). I recommend int
+  ▎ with the values above fixed in the enum.
+
+  ---
+  3. API Endpoints
+
+  All under /api. Consistent ApiResponse<T> envelope: { success,
+  data, message, errors }.
+
+  Method: POST
+  Route: /api/auth/login
+  Auth: Public
+  Purpose: Returns JWT
+  ────────────────────────────────────────
+  Method: GET
+  Route: /api/tasks?status=&priority=
+  Auth: JWT
+  Purpose: List + filter
+  ────────────────────────────────────────
+  Method: GET
+  Route: /api/tasks/{id}
+  Auth: JWT
+  Purpose: Detail
+  ────────────────────────────────────────
+  Method: POST
+  Route: /api/tasks
+  Auth: JWT
+  Purpose: Create
+  ────────────────────────────────────────
+  Method: PUT
+  Route: /api/tasks/{id}
+  Auth: JWT
+  Purpose: Update
+  ────────────────────────────────────────
+  Method: DELETE
+  Route: /api/tasks/{id}
+  Auth: JWT
+  Purpose: Soft delete
+  ────────────────────────────────────────
+  Method: GET
+  Route: /api/tasks/summary
+  Auth: JWT
+  Purpose: Counts by status & priority — raw SQL per scope
+
+  - Filtering via optional query params; combinable.
+  - Summary uses FromSqlRaw / Database.SqlQuery returning
+  grouped counts (scope explicitly requires raw SQL here).
+  - Validation via FluentValidation → 400 with field errors in
+  the envelope.
+  - Global exception middleware → consistent 500 envelope;
+  nothing leaks stack traces.
+
+  ---
+  4. Authentication Design
+
+  - Flow: POST /api/auth/login → validate credentials against
+  hashed password → issue JWT (HS256, signing key from
+  config/user-secrets, short-lived ~60 min) with claims sub,
+  username, role.
+  - API protection: [Authorize] on task controllers;
+  AddAuthentication().AddJwtBearer(...) validates
+  issuer/audience/lifetime/signature.
+  - Password storage: hashed (BCrypt.Net or ASP.NET
+  PasswordHasher). Seed admin gets a pre-hashed password.
+  - React protection: token stored client-side, attached via
+  Axios interceptor; <ProtectedRoute> guards redirect to /login
+  if no/expired token; 401 response → interceptor clears token
+  and redirects.
+
+  ▎ Decisions to confirm: (a) token storage — localStorage 
+  ▎ (simple, scope-level) vs httpOnly cookie (safer, more
+  ▎ setup). I recommend localStorage for this scope. (b) No
+  ▎ refresh tokens (out of scope) — re-login on expiry.
+
+  ---
+  5. React Application Structure
+
+  client/src/
+  ├── api/            # axios instance + interceptors, taskApi,
+  authApi
+  ├── auth/           # AuthContext (Context API),
+  ProtectedRoute, useAuth hook
+  ├── components/     # TaskList, TaskCard, TaskForm,
+  StatusDropdown, PriorityBadge, FilterBar
+  ├── pages/          # LoginPage, DashboardPage, TaskListPage,
+  TaskFormPage
+  ├── hooks/          # useTasks, etc.
+  ├── utils/          # enum maps, constants
+  ├── App.jsx         # routing
+  └── main.jsx
+
+  - State: Context API for auth (per scope); local component
+  state / hooks for task data. No Redux needed at this scale.
+  - Axios interceptor injects Authorization: Bearer and handles
+  401 globally.
+  - Priority indicators / status dropdown map enum ints ↔
+  labels/colors via a shared util.
+  - Build: Vite (fast, modern default) unless you prefer CRA.
+
+  ▎ Decision to confirm: Vite vs Create React App. I recommend
+  ▎ Vite.
+
+  ---
+  6. Unit Testing Strategy
+
+  - Scope: Application layer (service + business logic) per spec
+  — the highest-value, framework-free code.
+  - Stack: xUnit + Moq (mock ITaskRepository,
+  IJwtTokenGenerator) + FluentAssertions.
+  - What to cover:
+    - TaskService: create/update/soft-delete logic, filter
+  logic, not-found handling, summary aggregation.
+    - AuthService: valid login → token, invalid credentials →
+  failure, password verification.
+    - Validators: title-required, invalid status/priority
+  rejected.
+  - Out of scope: controllers/EF (would need integration tests
+  with a test DB — optional stretch using EF InMemory or SQLite
+  in-memory if you want).
+
+  ▎ Decision to confirm: Pure unit tests only (mocked repos), or
+  ▎ also add a small integration test project hitting an
+  ▎ in-memory DB? I recommend unit-only to match scope,
+  ▎ integration as optional bonus.
+
+  ---
+  7. Docker Strategy
+
+  docker-compose.yml orchestrating 3 services:
+
+  Service: sqlserver
+  Base image: mcr.microsoft.com/mssql/server:2022-latest
+  Notes: env: SA_PASSWORD, ACCEPT_EULA; named volume for
+    persistence
+  ────────────────────────────────────────
+  Service: api
+  Base image: multi-stage dotnet/sdk → dotnet/aspnet:8.0
+  Notes: runs EF migrations on startup; depends_on: sqlserver w/
+
+    healthcheck
+  ────────────────────────────────────────
+  Service: client
+  Base image: multi-stage node build → nginx
+  Notes: serves built SPA; nginx proxies /api to api service
+
+  - Multi-stage Dockerfiles keep runtime images small.
+  - Migrations on startup: API applies db.Database.Migrate() +
+  seeding at boot so the stack is usable immediately (scope:
+  "immediate application usage").
+  - Connection string via env var (compose overrides LocalDB →
+  container SQL Server).
+  - Networking: all on one compose network; client → api →
+  sqlserver.
+
+  ▎ Note: LocalDB (scope's stated dev engine) is Windows-only
+  ▎ and can't run in Linux containers — so dev uses LocalDB,
+  ▎ Docker uses full SQL Server 2022. Same EF provider, just a
+  ▎ different connection string. Confirm you're OK with this
+  ▎ split.
+
+  ---
+  Open decisions to finalize before I implement
+
+  1. Repository pattern (recommended) vs
+  services-use-DbContext-directly.
+  2. Enum storage as int (recommended) vs string.
+  3. JWT token storage in React — localStorage (recommended) vs
+  httpOnly cookie.
+  4. React build tool — Vite (recommended) vs CRA.
+  5. Testing — unit-only (recommended) vs + integration tests.
+  6. LocalDB (dev) / SQL Server container (Docker) split — OK?
+  7. Project naming — I used TMS.*; happy to switch to
+  TaskManagement.* or your preference.
+
+  Tell me which of these to adjust, and I'll lock the
+  architecture and then scaffold. Want me to capture the
+  finalized decisions in a CLAUDE.md / ARCHITECTURE.md once you
+  confirm?
+
+✻ Baked for 50s
+
+● How is Claude doing this session? (optional)
+  1: Bad    2: Fine   3: Good   0: Dismiss
+
+
+    can we add AssignedTo string in the Task entity along with              
+  AssignedToUserId (FK) and keep Users table only for authentication?     
+  Please explain the trade-offs. and for repository pattern use           
+  Repository + Service , choose int for enums , use local storage for to  
+  store the token,React build tool- vite,Testing — Unit tests only,local  
+  DB Developmen-SQL Server LocalDB and Docker-SQL Server Container and    
+  one more thing add code for seeding like in development only seeding    
+  data will get inserted in table and and if any entity gets change       
+  migrations should run automatically                                     
+
+● Good — all decisions locked. Let me address the AssignedTo question
+  first since it's the real design call, then the seeding/migration
+  behavior.
+
+  AssignedTo (string) + AssignedToUserId (FK), Users = auth only
+
+  This is a denormalization decision. Here's the shape I recommend:
+
+  Tasks.AssignedToUserId  int?   FK → Users.Id   (nullable, source of
+  truth for "who")
+  Tasks.AssignedTo        string?                (display snapshot of the
+  name)
+
+  Trade-offs
+
+  Pros
+  - No join to render. Task lists/summary show the assignee name straight
+  from the row — Users stays purely an auth table, never queried for
+  display. This is the main win and matches your "Users for auth only"
+  intent.
+  - Flexibility. You can assign to a free-text name with AssignedToUserId
+  = null (e.g. someone not in the auth table) and link to a real user when
+  one exists.
+  - Decoupling. Deleting/changing an auth user doesn't break historical
+  task display — the snapshot persists.
+
+  Cons
+  - Redundancy + staleness. AssignedTo is a copy. If a user's Username
+  ever changes, existing tasks keep the old string unless you re-sync. Low
+  risk here since auth usernames rarely change, but it's real.
+  - Sync responsibility moves to the service. On create/update you must
+  decide the rule. I recommend: if AssignedToUserId is provided, the
+  service looks up the user and sets AssignedTo from it (FK is source of
+  truth); if only a string is given, FK stays null (free-text). One clear
+  rule avoids the "which field is correct?" ambiguity.
+  - Two fields can disagree if written carelessly — the service rule above
+  is what prevents that.
+
+  The alternatives I'm rejecting for you:
+  - FK only — needs a Users join every render; contradicts "Users for auth
+  only."
+  - String only (no FK) — simplest, but zero referential integrity and you
+  can't reliably group/report by actual user.
+
+  Keeping both is the right call given your constraint. Confirmed into the
+  design.
+
+  Migrations: auto-apply — with one important caveat
+
+  You said "if any entity gets changed, migrations should run
+  automatically." Two distinct steps, and only one can be automatic:
+
+  Step: Create a migration from an entity change
+  Command: dotnet ef migrations add <Name>
+  Automatic?: ❌ No — this is a dev-time, intentional step. There is no
+    safe way to auto-generate schema diffs at runtime.
+  ────────────────────────────────────────
+  Step: Apply pending migrations to the DB
+  Command: db.Database.Migrate() at startup
+  Automatic?: ✅ Yes — runs on every app start.
+
+  So the workflow is: you change an entity → run dotnet ef migrations add
+  X once → and the app applies it automatically next startup (locally and
+  in the Docker container). That's the standard and what I'll implement.
+  I'm flagging this so there's no surprise that entity edits alone don't
+  produce migrations.
+
+  Seeding: Development-only + auto-apply migrations
+
+  Note: EF's HasData (model-level seed) bakes seed rows into migrations,
+  so it runs in every environment — that conflicts with "dev only." So
+  I'll use a custom idempotent seeder invoked at startup, gated by
+  IsDevelopment() instead. Here's the bootstrap (the one piece of code you
+  asked for):
+
+  // Program.cs — after building the app, before app.Run()
+  using (var scope = app.Services.CreateScope())
+  {
+      var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+      // Always apply any pending migrations (local + Docker container)
+      await db.Database.MigrateAsync();
+
+      // Seed ONLY in Development, and only if empty (idempotent)
+      if (app.Environment.IsDevelopment())
+      {
+          await DbSeeder.SeedAsync(db);
+      }
+  }
+
+  // Infrastructure/Seed/DbSeeder.cs
+  public static class DbSeeder
+  {
+      public static async Task SeedAsync(AppDbContext db)
+      {
+          if (!await db.Users.AnyAsync())
+          {
+              db.Users.Add(new User
+              {
+                  Username     = "admin",
+                  PasswordHash = /* pre-hashed "Admin@123" via the same
+  hasher the app uses */,
+                  Role         = "Admin",
+                  CreatedAt    = DateTime.UtcNow
+              });
+              await db.SaveChangesAsync();
+          }
+
+          if (!await db.Tasks.AnyAsync())
+          {
+              db.Tasks.AddRange(/* 10+ sample TaskItem rows, mixed
+  Status/Priority,
+                                   some with AssignedToUserId+AssignedTo,
+  some free-text */);
+              await db.SaveChangesAsync();
+          }
+      }
+  }
+
+  Key points:
+  - MigrateAsync() runs in all environments → schema always current on
+  startup (local LocalDB and the SQL Server container both self-migrate).
+  - Seeding is IsDevelopment()-gated → production/staging start clean.
+  - Idempotent (AnyAsync() guards) → restarting the app won't duplicate
+  rows.
+  - Password is hashed with the same hasher the login flow uses, so the
+  seeded admin can actually log in.
+
+  ---
+  Updated locked decisions
+
+  - Repository + Service ✓
+  - int enums ✓
+  - localStorage token ✓
+  - Vite ✓
+  - Unit tests only ✓
+  - LocalDB (dev) / SQL Server container (Docker) ✓
+  - AssignedTo string + AssignedToUserId FK, Users = auth only, FK is
+  source of truth, service syncs the string ✓
+  - Auto-apply migrations on startup (all envs); seeding Development-only,
+  idempotent ✓
+
+  Architecture is now fully specified. Want me to write this up into an
+  ARCHITECTURE.md + CLAUDE.md and then start scaffolding the solution?
+
+  Use only AssignedTo (string) in the Task entity and do not use          
+  AssignedToUserId. This is intentional to align exactly with the         
+  assignment requirements. The Users table should be used only for        
+  Authentication and Authorization purposes and should not have a         
+  relationship with the Tasks table and the The architecture is finalized 
+  Please provide the complete solution structure including Solution       
+  name,All projects, Project references, Folder structure inside each     
+  project, Purpose of each folder. Do not generate implementation code    
+  yet I want to review the final structure before scaffolding the         
+  solution.                                                               
+
+● Understood — Task.AssignedTo is a plain string, no FK, and Users is an
+  independent auth/authorization table with no relationship to Tasks.
+  Here's the finalized, complete structure.
+
+  Solution: TaskManagementSystem.sln
+
+  TaskManagementSystem/
+  ├── TaskManagementSystem.sln
+  ├── docker-compose.yml
+  ├── docker-compose.override.yml
+  ├── .dockerignore
+  ├── .gitignore
+  ├── README.md
+  ├── ARCHITECTURE.md
+  │
+  ├── src/
+  │   ├── TMS.Domain/
+  │   ├── TMS.Application/
+  │   ├── TMS.Infrastructure/
+  │   ├── TMS.API/
+  │   └── TMS.Shared/
+  │
+  ├── tests/
+  │   └── TMS.Application.Tests/
+  │
+  └── client/                      # React (Vite) SPA
+
+  Project reference graph
+
+  TMS.Domain          → (no references)
+  TMS.Shared          → (no references)            # .NET Standard 2.0
+  TMS.Application     → TMS.Domain, TMS.Shared
+  TMS.Infrastructure  → TMS.Application, TMS.Domain
+  TMS.API             → TMS.Application, TMS.Infrastructure, TMS.Shared
+  TMS.Application.Tests → TMS.Application, TMS.Domain, TMS.Shared
+
+  Dependencies point inward only (Clean Architecture). API is the
+  composition root — the single place Infrastructure is wired to
+  interfaces.
+
+  ---
+  1. TMS.Domain (net8.0) — enterprise core, zero dependencies
+
+  TMS.Domain/
+  ├── Entities/
+  │   ├── TaskItem.cs          # Id, Title, Description, Status, Priority,
+  │   │                        #   AssignedTo (string), IsDeleted,
+  CreatedAt, UpdatedAt
+  │   └── User.cs              # Id, Username, PasswordHash, Role,
+  CreatedAt  (auth only, standalone)
+  │
+  ├── Enums/
+  │   ├── TaskStatus.cs        # ToDo=0, InProgress=1, Done=2
+  │   └── TaskPriority.cs      # Low=0, Medium=1, High=2, Critical=3
+  │
+  └── Common/
+      └── BaseEntity.cs        # optional shared Id/CreatedAt base
+
+  ┌───────────┬────────────────────────────────────────────────────────┐
+  │  Folder   │                        Purpose                         │
+  ├───────────┼────────────────────────────────────────────────────────┤
+  │ Entities/ │ Core business objects. TaskItem and User have no       │
+  │           │ navigation properties to each other — fully decoupled. │
+  ├───────────┼────────────────────────────────────────────────────────┤
+  │ Enums/    │ Domain enumerations stored as int.                     │
+  ├───────────┼────────────────────────────────────────────────────────┤
+  │ Common/   │ Shared primitives/base types for entities.             │
+  └───────────┴────────────────────────────────────────────────────────┘
+
+  ---
+  2. TMS.Shared (netstandard2.0) — cross-project reuse (bonus)
+
+  TMS.Shared/
+  ├── Models/
+  │   └── ApiResponse.cs       # ApiResponse<T> { Success, Data, Message,
+  Errors }
+  ├── Constants/
+  │   └── AppConstants.cs      # role names, policy names, misc constants
+  └── Enums/
+      └── (shared enums if any need reuse outside Domain)
+
+  ┌────────────┬───────────────────────────────────────────────────────┐
+  │   Folder   │                        Purpose                        │
+  ├────────────┼───────────────────────────────────────────────────────┤
+  │ Models/    │ The consistent API response envelope used by          │
+  │            │ controllers and consumable by any .NET client.        │
+  ├────────────┼───────────────────────────────────────────────────────┤
+  │ Constants/ │ Centralized constant strings (roles, claim types,     │
+  │            │ etc.).                                                │
+  └────────────┴───────────────────────────────────────────────────────┘
+
+  ▎ Kept deliberately thin — it exists to demonstrate netstandard2.0 
+  ▎ cross-project reuse per the scope's bonus item.
+
+  ---
+  3. TMS.Application (net8.0) — use cases, contracts, business logic
+
+  TMS.Application/
+  ├── DTOs/
+  │   ├── Tasks/
+  │   │   ├── TaskDto.cs
+  │   │   ├── CreateTaskDto.cs
+  │   │   ├── UpdateTaskDto.cs
+  │   │   ├── TaskFilterDto.cs       # Status?, Priority?
+  │   │   └── TaskSummaryDto.cs      # counts by status & priority
+  │   └── Auth/
+  │       ├── LoginRequestDto.cs
+  │       └── LoginResponseDto.cs    # token, username, role
+  │
+  ├── Interfaces/
+  │   ├── Repositories/
+  │   │   ├── ITaskRepository.cs
+  │   │   └── IUserRepository.cs
+  │   ├── Services/
+  │   │   ├── ITaskService.cs
+  │   │   └── IAuthService.cs
+  │   └── Security/
+  │       ├── IJwtTokenGenerator.cs
+  │       └── IPasswordHasher.cs
+  │
+  ├── Services/
+  │   ├── TaskService.cs            # CRUD, filtering, soft delete,
+  summary orchestration
+  │   └── AuthService.cs           # credential check → token
+  │
+  ├── Validators/
+  │   ├── CreateTaskValidator.cs   # FluentValidation
+  │   ├── UpdateTaskValidator.cs
+  │   └── LoginRequestValidator.cs
+  │
+  ├── Mappings/
+  │   └── MappingProfile.cs        # AutoMapper entity ↔ DTO (or manual
+  mappers)
+  │
+  └── DependencyInjection.cs       # AddApplication() — registers
+  services, validators, mapper
+
+  ┌─────────────────────────┬──────────────────────────────────────────┐
+  │         Folder          │                 Purpose                  │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │                         │ Request/response contracts; keeps        │
+  │ DTOs/                   │ entities out of the API surface. Grouped │
+  │                         │  by feature.                             │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ Interfaces/Repositories │ Data-access contracts implemented in     │
+  │                         │ Infrastructure (Repository pattern).     │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ Interfaces/Services     │ Business-service contracts consumed by   │
+  │                         │ controllers.                             │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │                         │ Abstractions for JWT generation and      │
+  │ Interfaces/Security     │ password hashing (implemented in         │
+  │                         │ Infrastructure).                         │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ Services/               │ Business logic — the heart of unit       │
+  │                         │ testing.                                 │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ Validators/             │ FluentValidation rules (required title,  │
+  │                         │ valid enum values).                      │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ Mappings/               │ Entity↔DTO mapping configuration.        │
+  ├─────────────────────────┼──────────────────────────────────────────┤
+  │ DependencyInjection.cs  │ Single extension method to register this │
+  │                         │  layer's services.                       │
+  └─────────────────────────┴──────────────────────────────────────────┘
+
+  ---
+  4. TMS.Infrastructure (net8.0) — EF Core, data access, security impls
+
+  TMS.Infrastructure/
+  ├── Persistence/
+  │   ├── AppDbContext.cs           # DbSet<TaskItem>, DbSet<User>
+  │   └── Configurations/
+  │       ├── TaskItemConfiguration.cs   # column constraints, soft-delete
+  query filter
+  │       └── UserConfiguration.cs       # unique username index
+  │
+  ├── Repositories/
+  │   ├── TaskRepository.cs
+  │   └── UserRepository.cs
+  │
+  ├── Security/
+  │   ├── JwtTokenGenerator.cs
+  │   └── PasswordHasher.cs
+  │
+  ├── Seed/
+  │   └── DbSeeder.cs               # Development-only, idempotent seed
+  (admin + 10+ tasks)
+  │
+  ├── Migrations/                   # EF Core generated migrations
+  │
+  └── DependencyInjection.cs        # AddInfrastructure(config) —
+  DbContext, repos, security
+
+  ┌────────────────────────┬───────────────────────────────────────────┐
+  │         Folder         │                  Purpose                  │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │                        │ AppDbContext + fluent entity              │
+  │ Persistence/           │ configurations (constraints, soft-delete  │
+  │                        │ global filter).                           │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │ Repositories/          │ Concrete repository implementations       │
+  │                        │ wrapping the DbContext.                   │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │ Security/              │ JWT token generator and password hasher   │
+  │                        │ implementations.                          │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │ Seed/                  │ Idempotent dev seeder (invoked at         │
+  │                        │ startup, gated by environment).           │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │ Migrations/            │ Code-First migration history.             │
+  ├────────────────────────┼───────────────────────────────────────────┤
+  │                        │ AddInfrastructure() registering           │
+  │ DependencyInjection.cs │ DbContext, repositories, and security     │
+  │                        │ services.                                 │
+  └────────────────────────┴───────────────────────────────────────────┘
+
+  ---
+  5. TMS.API (net8.0) — presentation / composition root
+
+  TMS.API/
+  ├── Controllers/
+  │   ├── TasksController.cs        # GET, GET/{id}, POST, PUT, DELETE,
+  GET/summary
+  │   └── AuthController.cs         # POST /api/auth/login
+  │
+  ├── Middleware/
+  │   ├── ExceptionHandlingMiddleware.cs   # global try/catch →
+  ApiResponse envelope
+  │   └── RequestLoggingMiddleware.cs      # request/response logging
+  │
+  ├── Extensions/
+  │   ├── SwaggerExtensions.cs      # Swagger + JWT bearer config
+  │   └── AuthenticationExtensions.cs  # JwtBearer setup
+  │
+  ├── Properties/
+  │   └── launchSettings.json
+  │
+  ├── appsettings.json
+  ├── appsettings.Development.json
+  ├── Dockerfile
+  └── Program.cs                    # wires Application + Infrastructure,
+  migrate + dev-seed, pipeline
+
+  ┌──────────────┬─────────────────────────────────────────────────────┐
+  │    Folder    │                       Purpose                       │
+  ├──────────────┼─────────────────────────────────────────────────────┤
+  │ Controllers/ │ Thin HTTP endpoints delegating to services; return  │
+  │              │ ApiResponse<T>.                                     │
+  ├──────────────┼─────────────────────────────────────────────────────┤
+  │ Middleware/  │ Global exception handling and request logging.      │
+  ├──────────────┼─────────────────────────────────────────────────────┤
+  │ Extensions/  │ Startup configuration helpers (Swagger w/ JWT,      │
+  │              │ authentication).                                    │
+  ├──────────────┼─────────────────────────────────────────────────────┤
+  │              │ Composition root: registers layers, runs            │
+  │ Program.cs   │ MigrateAsync() always + seeder in Development,      │
+  │              │ builds the request pipeline.                        │
+  └──────────────┴─────────────────────────────────────────────────────┘
+
+  ---
+  6. tests/TMS.Application.Tests (net8.0) — xUnit + Moq + FluentAssertions
+
+  TMS.Application.Tests/
+  ├── Services/
+  │   ├── TaskServiceTests.cs       # CRUD, filtering, soft delete,
+  summary (mocked ITaskRepository)
+  │   └── AuthServiceTests.cs       # valid/invalid login, token issuance
+  (mocked deps)
+  │
+  ├── Validators/
+  │   ├── CreateTaskValidatorTests.cs
+  │   └── LoginRequestValidatorTests.cs
+  │
+  └── Helpers/
+      └── TestDataFactory.cs        # builders for TaskItem/DTO test
+  fixtures
+
+  ┌─────────────┬──────────────────────────────────────────────────────┐
+  │   Folder    │                       Purpose                        │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ Services/   │ Unit tests for business logic with mocked            │
+  │             │ repositories/security.                               │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ Validators/ │ FluentValidation rule tests.                         │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ Helpers/    │ Shared test data builders.                           │
+  └─────────────┴──────────────────────────────────────────────────────┘
+
+  ---
+  7. client/ — React SPA (Vite)
+
+  client/
+  ├── public/
+  ├── src/
+  │   ├── api/
+  │   │   ├── axiosClient.js        # base instance + JWT interceptor
+  (localStorage) + 401 handling
+  │   │   ├── taskApi.js
+  │   │   └── authApi.js
+  │   ├── auth/
+  │   │   ├── AuthContext.jsx       # Context API auth state
+  │   │   ├── useAuth.js
+  │   │   └── ProtectedRoute.jsx
+  │   ├── components/
+  │   │   ├── TaskList.jsx
+  │   │   ├── TaskCard.jsx
+  │   │   ├── TaskForm.jsx
+  │   │   ├── StatusDropdown.jsx
+  │   │   ├── PriorityBadge.jsx
+  │   │   └── FilterBar.jsx
+  │   ├── pages/
+  │   │   ├── LoginPage.jsx
+  │   │   ├── DashboardPage.jsx
+  │   │   ├── TaskListPage.jsx
+  │   │   └── TaskFormPage.jsx
+  │   ├── hooks/
+  │   │   └── useTasks.js
+  │   ├── utils/
+  │   │   └── enums.js              # status/priority int ↔ label/color
+  maps
+  │   ├── App.jsx                   # routing
+  │   └── main.jsx
+  ├── Dockerfile                    # multi-stage node build → nginx
+  ├── nginx.conf                    # serve SPA, proxy /api → api service
+  ├── .env.development
+  ├── .env.production
+  ├── index.html
+  ├── package.json
+  └── vite.config.js
+
+  ┌─────────────┬──────────────────────────────────────────────────────┐
+  │   Folder    │                       Purpose                        │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ api/        │ Axios client with JWT interceptor + per-resource API │
+  │             │  modules.                                            │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ auth/       │ Context API auth state, useAuth hook, route guard.   │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ components/ │ Reusable presentational components.                  │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ pages/      │ Route-level views.                                   │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ hooks/      │ Data-fetching hooks.                                 │
+  ├─────────────┼──────────────────────────────────────────────────────┤
+  │ utils/      │ Enum ↔ label/color mappings shared across            │
+  │             │ components.                                          │
+  └─────────────┴──────────────────────────────────────────────────────┘
+
+  ---
+  Root-level files
+
+  ┌─────────────────────────────┬──────────────────────────────────────┐
+  │            File             │               Purpose                │
+  ├─────────────────────────────┼──────────────────────────────────────┤
+  │ docker-compose.yml          │ Orchestrates sqlserver, api, client  │
+  │                             │ (+ network, volume).                 │
+  ├─────────────────────────────┼──────────────────────────────────────┤
+  │ docker-compose.override.yml │ Local dev overrides (ports, env).    │
+  ├─────────────────────────────┼──────────────────────────────────────┤
+  │ ARCHITECTURE.md             │ The finalized decisions record.      │
+  ├─────────────────────────────┼──────────────────────────────────────┤
+  │ README.md                   │ Setup/run instructions.              │
+  ├─────────────────────────────┼──────────────────────────────────────┤
+  │ .dockerignore / .gitignore  │ Standard ignores.                    │
+  └─────────────────────────────┴──────────────────────────────────────┘
+
+  ---
+  This reflects every locked decision: standalone Users table,
+  Task.AssignedTo as a plain string with no FK/relationship, Repository +
+  Service, int enums, Vite + localStorage, unit-tests-only,
+  LocalDB-dev/SQL-container-Docker, auto-apply migrations +
+  Development-only idempotent seeding.
+
+  Review the structure. Once you approve, I'll scaffold the solution
+  (projects, references, folders, package installs — no business logic yet
+  unless you want it in the same pass). Want me to also write out
+  ARCHITECTURE.md capturing these decisions as part of scaffolding?
+
+✻ Cogitated for 48s
+
+● How is Claude doing this session? (optional)
+  1: Bad    2: Fine   3: Good   0: Dismiss
+
+Rename client to frontend ,The solution structure is approved. Please   
+  scaffold the solution, projects, references, folders, package           
+  dependencies, and configuration files. Do not implement business logic  
+  yet,I want the project structure generated first.                       
+  
+● Let me verify the tooling available before scaffolding.
+
+● PowerShell(dotnet --version; Write-Output "---"; dotnet --list-sdks;
+            Write-Output "--- node ---"; node --version; Write-Output "---
+            npm ---"; npm --version; Write-Output "…)
+  ⎿  9.0.305
+     ---
+     9.0.305 [C:\Program Files\dotnet\sdk]
+     … +7 lines (ctrl+o to expand)
+     
+● Tooling check: .NET 9.0.305 SDK is installed (not .NET 8), Node 22, EF
+  9. The assignment requires .NET 8. I'll target net8.0 (to match the
+  requirement — builds fine on the .NET 9 SDK via NuGet reference packs)
+  and add RollForward=Major so it still runs locally on the installed .NET
+  9 runtime. Docker will use the real aspnet:8.0 image.
+  
+  Let me scaffold. Starting with the solution and projects.
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            dotnet new sln -n TaskManagementSystem…)
+  ⎿  Running in the background (↓ to manage)
+
+  Read 1 file (ctrl+o to expand)
+
+● Still running. Let me wait for it to finish.
+
+  Read 1 file (ctrl+o to expand)
+
+● Bash(while kill -0 2>/dev/null; do :; done; sleep 1; tail -n 20
+      "C:\Users\Prashant\AppData\Local\Temp\claude\C--Users-Prashant-OneDr
+      ive-Desktop-Litmos-Task-Managemen…)
+  ⎿  Restoring C:\Users\Prashant\OneDrive\Desktop\Litmos\Task Managem
+     ent System\src\TMS.Shared\TMS.Shared.csproj:
+       Determining projects to restore...
+     … +19 lines (ctrl+o to expand)
+   
+● All projects created (Shared restore took 3 min — first netstandard2.0
+  restore). Waiting on the final test project restore.
+     
+● Bash(f="C:\Users\Prashant\AppData\Local\Temp\claude\C--Users-Prashant-On
+      eDrive-Desktop-Litmos-Task-Management-System\df930ba9-92ae-4fd8-a93a
+      -85861c41e4f8\tasks\bbzg1…)
+  ⎿  COMPLETE
+       Determining projects to restore...
+       Restored C:\Users\Prashant\OneDrive\Desktop\Litmos\Task Manage
+     … +6 lines (ctrl+o to expand)
+     
+● Background command "Create solution and all .NET projects" completed
+(exit code 0)
+  
+● All 6 projects created. Now adding them to the solution, wiring project
+  references, and adding NuGet packages.
+   
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            dotnet sln add src/TMS.Domain/TMS.Domain.csproj
+            src/TMS.Application/TMS.Applicat…)
+  ⎿  Project `src\TMS.Domain\TMS.Domain.csproj` added to the solution
+     .
+     Project `src\TMS.Application\TMS.Application.csproj` added to th
+     … +18 lines (ctrl+o to expand)
+     
+● References wired correctly. Rather than many slow dotnet add package
+  restores, I'll write the PackageReferences directly into each .csproj
+  (pinned to 8.0.x to match net8.0) and restore once. Let me read the
+  current csproj files.
+     
+  Read 6 files (ctrl+o to expand)
+
+● Templates already pinned Swashbuckle 6.6.2 (good). Now I'll add the
+  package references and RollForward=Major to each csproj.
+
+● Update(src\TMS.API\TMS.API.csproj)
+  ⎿  Added 7 lines
+       4      <TargetFramework>net8.0</TargetFramework>
+       5      <Nullable>enable</Nullable>
+       6      <ImplicitUsings>enable</ImplicitUsings>
+       7 +    <!-- Built on .NET 8 per spec; allow running on a new
+         +er installed runtime (e.g. .NET 9). -->                  
+       8 +    <RollForward>Major</RollForward>                     
+       9    </PropertyGroup>
+      10  
+      11    <ItemGroup>
+      12      <PackageReference Include="Swashbuckle.AspNetCore" Ve
+          rsion="6.6.2" />
+      13 +    <PackageReference Include="Microsoft.AspNetCore.Authe
+         +ntication.JwtBearer" Version="8.0.11" />                 
+      14 +    <PackageReference Include="Microsoft.EntityFrameworkC
+         +ore.Design" Version="8.0.11">                            
+      15 +      <IncludeAssets>runtime; build; native; contentfiles
+         +; analyzers; buildtransitive</IncludeAssets>             
+      16 +      <PrivateAssets>all</PrivateAssets>                 
+      17 +    </PackageReference>                                  
+      18    </ItemGroup>
+      19  
+      20    <ItemGroup>
+
+● Update(src\TMS.Application\TMS.Application.csproj)
+  ⎿  Added 7 lines
+       5      <ProjectReference Include="..\TMS.Shared\TMS.Shared.c
+          sproj" />
+       6    </ItemGroup>
+       7  
+       8 +  <ItemGroup>                                            
+       9 +    <PackageReference Include="FluentValidation" Version=
+         +"11.10.0" />                                             
+      10 +    <PackageReference Include="FluentValidation.Dependenc
+         +yInjectionExtensions" Version="11.10.0" />               
+      11 +    <PackageReference Include="AutoMapper" Version="12.0.
+         +1" />                                                    
+      12 +    <PackageReference Include="AutoMapper.Extensions.Micr
+         +osoft.DependencyInjection" Version="12.0.1" />           
+      13 +  </ItemGroup>                                           
+      14 +                                                         
+      15    <PropertyGroup>
+      16      <TargetFramework>net8.0</TargetFramework>
+      17      <ImplicitUsings>enable</ImplicitUsings>
+
+● Update(src\TMS.Infrastructure\TMS.Infrastructure.csproj)
+  ⎿  Added 13 lines
+       5      <ProjectReference Include="..\TMS.Domain\TMS.Domain.c
+          sproj" />
+       6    </ItemGroup>
+       7  
+       8 +  <ItemGroup>                                            
+       9 +    <PackageReference Include="Microsoft.EntityFrameworkC
+         +ore.SqlServer" Version="8.0.11" />                       
+      10 +    <PackageReference Include="Microsoft.EntityFrameworkC
+         +ore.Design" Version="8.0.11">                            
+      11 +      <IncludeAssets>runtime; build; native; contentfiles
+         +; analyzers; buildtransitive</IncludeAssets>             
+      12 +      <PrivateAssets>all</PrivateAssets>                 
+      13 +    </PackageReference>                                  
+      14 +    <PackageReference Include="Microsoft.IdentityModel.To
+         +kens" Version="8.2.1" />                                 
+      15 +    <PackageReference Include="System.IdentityModel.Token
+         +s.Jwt" Version="8.2.1" />                                
+      16 +    <PackageReference Include="BCrypt.Net-Next" Version="
+         +4.0.3" />                                                
+      17 +    <PackageReference Include="Microsoft.Extensions.Confi
+         +guration.Abstractions" Version="8.0.0" />                
+      18 +    <PackageReference Include="Microsoft.Extensions.Depen
+         +dencyInjection.Abstractions" Version="8.0.2" />          
+      19 +  </ItemGroup>                                           
+      20 +                                                         
+      21    <PropertyGroup>
+      22      <TargetFramework>net8.0</TargetFramework>
+      23      <ImplicitUsings>enable</ImplicitUsings>
+
+● Update(tests\TMS.Application.Tests\TMS.Application.Tests.csproj)
+  ⎿  Added 2 lines
+      14      <PackageReference Include="Microsoft.NET.Test.Sdk" Ve
+          rsion="17.8.0" />
+      15      <PackageReference Include="xunit" Version="2.5.3" />
+      16      <PackageReference Include="xunit.runner.visualstudio"
+           Version="2.5.3" />
+      17 +    <PackageReference Include="Moq" Version="4.20.72" /> 
+      18 +    <PackageReference Include="FluentAssertions" Version=
+         +"6.12.2" />                                              
+      19    </ItemGroup>
+      20  
+      21    <ItemGroup>
+
+● Now let me see what template boilerplate exists so I can remove it and
+  lay out the folder structure.
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            Get-ChildItem -Recurse -File -Include *.cs,*.json,*.http -Path
+            src,tests | Where…)
+  ⎿  src\TMS.API\Controllers\WeatherForecastController.cs
+     src\TMS.API\Properties\launchSettings.json
+     src\TMS.API\appsettings.Development.json
+     … +9 lines (ctrl+o to expand)
+   
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            Remove-Item -Force `…)
+  ⎿  boilerplate removed
+
+● Now creating the folder structure across all projects with .gitkeep
+  placeholders.
+     
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            $folders = @(…)
+  ⎿  Created 24 folders with .gitkeep
+   
+● Folders laid out. Now I'll kick off the .NET restore/build in the
+  background (downloads EF 8.0.x etc.) while I scaffold the frontend.
+   
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            dotnet build TaskManagementSystem.sln -v minimal)
+  ⎿  Running in the background (↓ to manage)
+
+● Now scaffolding the React frontend with Vite (non-interactive) into
+  frontend/.
+     
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            npm create vite@latest frontend -- --template react 2>&1 |
+            Out-String…)
+  ⎿  node.exe : npm warn exec The following package was not found and
+      will be
+     installed: create-vite@9.0.7
+     … +27 lines (ctrl+o to expand)
+     
+● Vite scaffolded successfully. Let me check what it generated.
+
+  Read 1 file (ctrl+o to expand)
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System\frontend"
+            Get-ChildItem -Recurse -File | Where-Object { $_.FullName
+            -notmatch 'no…)
+  ⎿  .gitignore
+     eslint.config.js
+     index.html
+     … +12 lines (ctrl+o to expand)
+     
+● Background command "Restore and build the .NET solution" completed (exit
+code 0)
+     
+● The .NET build succeeded (exit 0). Let me confirm the build output.
+
+  Read 1 file (ctrl+o to expand)
+
+● Build succeeded — all 6 projects compile. One flag: AutoMapper 12.0.1 
+  has a known high-severity vulnerability (NU1903). For a project this
+  small, manual mapping is the better call anyway — fewer deps, no CVE,
+  and AutoMapper 13+ would change DI wiring. I'll drop AutoMapper and keep
+  the Mappings/ folder for manual mapper extension methods.
+     
+● Update(~\OneDrive\Desktop\Litmos\Task Management
+        System\src\TMS.Application\TMS.Application.csproj)
+  ⎿  Removed 2 lines
+       8    <ItemGroup>
+       9      <PackageReference Include="FluentValidation" Version=
+          "11.10.0" />
+      10      <PackageReference Include="FluentValidation.Dependenc
+          yInjectionExtensions" Version="11.10.0" />
+      11 -    <PackageReference Include="AutoMapper" Version="12.0.
+         -1" />                                                    
+      12 -    <PackageReference Include="AutoMapper.Extensions.Micr
+         -osoft.DependencyInjection" Version="12.0.1" />           
+      11    </ItemGroup>
+      12  
+      13    <PropertyGroup>
+
+● Now adding frontend dependencies (axios, react-router-dom) and
+  installing — running in background since npm install is slow.
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System\frontend"
+            npm install axios react-router-dom 2>&1 | Out-String…)
+  ⎿  Running in the background (↓ to manage)
+
+● Now creating the frontend folder structure with .gitkeep placeholders.
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System\frontend"
+            $folders =
+            @("src\api","src\auth","src\components","src\pages","src\hoo…)
+  ⎿  Created frontend folders
+  
+● While npm installs, I'll create the configuration files. First the API
+  settings — let me read the defaults.
+
+  Read 2 files (ctrl+o to expand)
+
+● npm is installing. Now I'll write all the configuration files. Starting
+  with API settings and JWT/connection config.
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management
+       System\src\TMS.API\appsettings.json)
+  ⎿  Added 9 lines
+       1  {
+       2 +  "ConnectionStrings": {                                 
+       3 +    "DefaultConnection": ""                              
+       4 +  },                                                     
+       5 +  "Jwt": {                                               
+       6 +    "Issuer": "TaskManagementSystem",                    
+       7 +    "Audience": "TaskManagementSystemUsers",             
+       8 +    "Key": "REPLACE_WITH_A_SECURE_SECRET_AT_LEAST_32_CHAR
+         +ACTERS_LONG",                                            
+       9 +    "ExpiryMinutes": 60                                  
+      10 +  },                                                     
+      11    "Logging": {
+      12      "LogLevel": {
+      13        "Default": "Information",
+
+● Background command "Install axios and react-router-dom (+ base deps)"
+completed (exit code 0)
+
+● npm install finished. Continuing with config files.
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management
+       System\src\TMS.API\appsettings.Development.json)
+  ⎿  Added 9 lines
+       1  {
+       2 +  "ConnectionStrings": {                                 
+       3 +    "DefaultConnection": "Server=(localdb)\\MSSQLLocalDB;
+         +Database=TaskManagementDb;Trusted_Connection=True;Multipl
+         +eActiveResultSets=true;TrustServerCertificate=True"      
+       4 +  },                                                     
+       5 +  "Jwt": {                                               
+       6 +    "Issuer": "TaskManagementSystem",                    
+       7 +    "Audience": "TaskManagementSystemUsers",             
+       8 +    "Key": "dev-only-super-secret-signing-key-change-me-3
+         +2chars-min",                                             
+       9 +    "ExpiryMinutes": 60                                  
+      10 +  },                                                     
+      11    "Logging": {
+      12      "LogLevel": {
+      13        "Default": "Information",
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management
+       System\src\TMS.API\Dockerfile)
+  ⎿  Wrote 25 lines to ..\src\TMS.API\Dockerfile
+       2 # syntax=docker/dockerfile:1
+       3 # ---------- build stage ----------
+       4 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+       6 WORKDIR /src
+       7 # Copy csproj files first to leverage Docker layer caching
+          on restore.
+       9 COPY ["src/TMS.Application/TMS.Application.csproj", "src/T
+         MS.Application/"]
+      10 COPY ["src/TMS.Infrastructure/TMS.Infrastructure.csproj", 
+         "src/TMS.Infrastructure/"]
+     … +19 lines (ctrl+o to expand)
+
+● Write(Dockerfile)
+  ⎿  Wrote 16 lines to Dockerfile
+      1 # syntax=docker/dockerfile:1
+      2 
+      3 # ---------- build stage ----------
+      4 FROM node:22-alpine AS build
+      5 WORKDIR /app
+      6 COPY package*.json ./   
+      7 RUN npm ci
+      8 COPY . .
+      9 RUN npm run build
+     … +6 lines (ctrl+o to expand)
+
+● Write(nginx.conf)
+  ⎿  Wrote 22 lines to nginx.conf
+       2     listen 80;
+       3     server_name _;
+       4 
+       5     root /usr/share/nginx/html;
+       6     index index.html;
+       7    
+       8     # SPA fallback: let React Router handle client-side ro
+         utes.
+       9     location / {
+      10         try_files $uri $uri/ /index.html;
+     … +15 lines (ctrl+o to expand)
+
+● Write(.env.development)
+  ⎿  Wrote 2 lines to .env.development
+      1 # Dev: Vite dev server proxies to the locally-running API.
+      2 VITE_API_BASE_URL=http://localhost:5000/api
+     
+● Write(.env.production)
+  ⎿  Wrote 2 lines to .env.production
+      1 # Prod (Docker/nginx): same-origin; nginx proxies /api to t
+        he api service.
+      2 VITE_API_BASE_URL=/api
+  
+● Write(.dockerignore)
+  ⎿  Wrote 7 lines to .dockerignore
+      1 node_modules
+      2 dist
+      3 .git
+      4 .env.development
+      5 npm-debug.log*
+      6 Dockerfile
+      7 .dockerignore
+
+● Now the Docker Compose orchestration and root ignore files.
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management
+       System\docker-compose.yml)
+  ⎿  Wrote 49 lines to ..\docker-compose.yml
+       1 services:
+       2   sqlserver:
+       3     image: mcr.microsoft.com/mssql/server:2022-latest
+       4     container_name: tms-sqlserver
+       5     environment:
+       6       ACCEPT_EULA: "Y"
+       7       MSSQL_SA_PASSWORD: "Your_strong_Password123"
+       8     ports:
+       9       - "1433:1433"
+      10     volumes:
+     … +45 lines (ctrl+o to expand)
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management
+       System\docker-compose.override.yml)
+  ⎿  Wrote 8 lines to ..\docker-compose.override.yml
+      1 # Auto-merged by `docker compose up` for local development.
+      2 # Runs the API in the Development environment so EF migrati
+        ons are applied
+      3 # AND the idempotent dev seeder runs (admin user + sample t
+        asks) inside the
+      4 # container — giving an immediately usable demo stack.
+      5 services:
+      6   api:
+      7     environment:
+      8       ASPNETCORE_ENVIRONMENT: Development
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management System\.dockerignore)
+  ⎿  Wrote 12 lines to ..\.dockerignore
+       1 **/bin
+       2 **/obj
+       3 **/.vs
+       4 **/.vscode
+       5 **/node_modules
+       6 **/dist
+       7 frontend
+       8 .git
+       9 .gitignore
+      10 **/*.user
+     … +2 lines (ctrl+o to expand)
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management System\.gitignore)
+  ⎿  Wrote 35 lines to ..\.gitignore
+       1 # ---- .NET ----
+       2 bin/
+       3 obj/
+       4 *.user
+       5 *.suo
+       6 .vs/
+       7 [Dd]ebug/
+       8 [Rr]elease/
+       9 artifacts/
+      10 *.dll
+     … +25 lines (ctrl+o to expand)
+
+● Now the documentation files capturing the finalized decisions and run
+  instructions.
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management System\ARCHITECTURE.md)
+  ⎿  Wrote 80 lines to ..\ARCHITECTURE.md
+       2 # Architecture — Task Management System
+       3 Finalized architecture and the decisions behind it. This d
+         ocument is the source of
+       4 truth for how the solution is structured; the spec lives i
+         n `project-scope.md`.
+       6 ## Stack
+       7 
+       8 | Concern        | Choice |
+       9 |----------------|--------|
+      10 | Backend        | .NET 8, ASP.NET Core Web API |
+     … +106 lines (ctrl+o to expand)
+
+● Write(~\OneDrive\Desktop\Litmos\Task Management System\README.md)
+  ⎿  Wrote 76 lines to ..\README.md
+       2 # Task Management System
+       3 Full-stack task management: .NET 8 Clean Architecture API 
+         + React (Vite) SPA, backed by
+         t-scope.md` for requirements andst migrations. See `projec
+       5 `ARCHITECTURE.md` for the design decisions.
+       6    
+         eferences, packages, and configtion structure, projects, r
+       8 > are in place. Business logic is not yet implemented.
+       9 
+      10 ## Prerequisites
+     … +74 lines (ctrl+o to expand)
+
+● All config and docs written. Let me do a final verification — rebuild
+  the solution (AutoMapper removed) and confirm the frontend builds.
+
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            dotnet build TaskManagementSystem.sln -v minimal --nologo)
+  ⎿    Determining projects to restore...
+       Restored C:\Users\Prashant\OneDrive\Desktop\Litmos\Task Manage
+     ment System\src\TMS.Application\TMS.Application.csproj (in 340 m
+     … +23 lines (ctrl+o to expand)
+     
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System\frontend"
+            npm run build 2>&1 | Out-String)
+  ⎿  > frontend@0.0.0 build
+     > vite build
+     … +13 lines (ctrl+o to expand)
+
+● Both build clean — .NET: 0 warnings, 0 errors; frontend: built 
+  successfully. Scaffolding is complete. Here's the final verified
+  structure:
+  
+● PowerShell(Set-Location "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            Get-ChildItem -Recurse -File | Where-Object { $_.FullName
+            -notmatch '\\(bin|obj|…)
+  ⎿  .dockerignore
+     .gitignore
+     ARCHITECTURE.md
+     … +46 lines (ctrl+o to expand)
+   
+● Scaffolding complete ✅
+
+  Both stacks verified building clean. Here's what's in place:
+
+  .NET solution (TaskManagementSystem.sln) — 6 projects, builds with 0 
+  warnings/0 errors
+
+  ┌───────────────────────┬────────────────┬───────────────────────────┐
+  │        Project        │     Target     │      Packages added       │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │ TMS.Domain            │ net8.0         │ —                         │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │ TMS.Shared            │ netstandard2.0 │ —                         │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │ TMS.Application       │ net8.0         │ FluentValidation (+ DI    │
+  │                       │                │ extensions)               │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │                       │                │ EF Core SqlServer +       │
+  │ TMS.Infrastructure    │ net8.0         │ Design,                   │
+  │                       │                │ IdentityModel/JWT,        │
+  │                       │                │ BCrypt.Net                │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │                       │                │ JwtBearer, EF Design,     │
+  │ TMS.API               │ net8.0         │ Swashbuckle;              │
+  │                       │                │ RollForward=Major         │
+  ├───────────────────────┼────────────────┼───────────────────────────┤
+  │ TMS.Application.Tests │ net8.0         │ xUnit, Moq,               │
+  │                       │                │ FluentAssertions          │
+  └───────────────────────┴────────────────┴───────────────────────────┘
+
+  - References wired inward-only per Clean Architecture.
+  - All folders created with .gitkeep placeholders (Entities/Enums, DTOs,
+  Interfaces, Services, Validators, Mappings, Persistence/Configurations,
+  Repositories, Security, Seed, Migrations, Middleware, Extensions, test
+  Services/Validators/Helpers).
+  - Template boilerplate removed (Class1.cs, WeatherForecast,
+  UnitTest1.cs).
+
+  Frontend (frontend/, renamed from client) — Vite + React 19, builds
+  successfully
+
+  - Deps: axios, react-router-dom installed.
+  - Folders: api/ auth/ components/ pages/ hooks/ utils/ (with .gitkeep).
+  - Dockerfile (node build → nginx), nginx.conf (SPA fallback + /api
+  proxy), .env.development / .env.production, .dockerignore.
+
+  Config & docs
+
+  - src/TMS.API/appsettings.json + .Development.json — ConnectionStrings +
+  Jwt sections (LocalDB string in Development).
+  - docker-compose.yml (sqlserver + api + frontend, healthcheck, volume) +
+  docker-compose.override.yml (runs API as Development so seeding fires
+  in the container).
+  - Root .gitignore, .dockerignore, ARCHITECTURE.md (all locked
+  decisions), README.md (run/migration instructions).
+
+  Two things I decided during scaffolding (flagging for your awareness)
+
+  1. Dropped AutoMapper — v12.0.1 threw a high-severity CVE warning
+  (NU1903). Manual mapper extensions in Mappings/ are cleaner for this
+  size. Say the word if you'd rather I pin a patched AutoMapper instead.
+  2. net8.0 + RollForward=Major — your machine only has the .NET 9
+  SDK/runtime. Projects target net8.0 (per spec); roll-forward lets them
+  run locally on .NET 9, and Docker uses the true aspnet:8.0 image.
+
+  No business logic written — every .cs source file is yet to be created.
+  Ready to scaffold the next layer whenever you are. Want me to start with
+  the Domain entities/enums, or wire up Program.cs + DI + DbContext
+  first?
+
+✻ Cooked for 10m 13s
+
+● How is Claude doing this session? (optional)
+  1: Bad    2: Fine   3: Good   0: Dismiss
+
+  scaffolding is look fine. now Please generate only the Domain   
+  layer.                                                          
+  and the reqirement is Create TaskItem entity,Create User        
+  entity,Create TaskStatus Enum,Create TaskPriority Enum,Add      
+  appropriate properties based on PROJECT-SCOPE.md,Use int-based  
+  enums,Do not create DTOs,Do not create repositories,Do not      
+  create services,Do not create controllers,Do not create EF Core 
+  configurations. Generate only the Domain layer and explain any  
+  design decisions.                                               
+
+● Generating the Domain layer only — entities, enums, and a small
+  shared base. Here are the files.
+
+● Write(src\TMS.Domain\Common\BaseEntity.cs)
+  ⎿  Wrote 14 lines to src\TMS.Domain\Common\BaseEntity.cs
+       2 namespace TMS.Domain.Common;
+       3 /// <summary>
+       4 /// Base type for persistable domain entities. Hol
+       5 /// timestamp shared by every entity so they are n
+         ot repeated on each one.
+       6 /// </summary>
+       8 {ublic abstract class BaseEntity
+       9     /// <summary>Primary key (database identity).<
+         /summary>
+      10     public int Id { get; set; }
+     … +8 lines (ctrl+o to expand)
+                              
+● Write(src\TMS.Domain\Enums\TaskStatus.cs)
+  ⎿  Wrote 11 lines to src\TMS.Domain\Enums\TaskStatus.cs
+       2 namespace TMS.Domain.Enums;
+       3 /// <summary>
+       4 /// Workflow state of a task. Stored as <see cref=
+         "int"/> in the database.
+       5 /// </summary>
+       6 public enum TaskStatus 
+       7 {
+       8     ToDo = 0,
+       9     InProgress = 1,
+      10     Done = 2
+     … +2 lines (ctrl+o to expand)
+
+● Write(src\TMS.Domain\Enums\TaskPriority.cs)
+  ⎿  Wrote 12 lines to src\TMS.Domain\Enums\TaskPriority.cs
+       2 namespace TMS.Domain.Enums;
+       3 /// <summary>
+       4 /// Importance level of a task. Stored as <see cre
+         f="int"/> in the database.
+       5 /// </summary>
+       6 public enum TaskPriority
+       7 {
+       8     Low = 0,
+       9     Medium = 1,
+      10     High = 2,
+     … +3 lines (ctrl+o to expand)
+
+● Write(src\TMS.Domain\Entities\TaskItem.cs)
+  ⎿  Wrote 36 lines to src\TMS.Domain\Entities\TaskItem.cs
+       2 using TMS.Domain.Enums;;
+       3 // Disambiguate from System.Threading.Tasks.TaskSt
+         atus (pulled in by ImplicitUsings).
+       4 using TaskStatus = TMS.Domain.Enums.TaskStatus;
+       5 
+       7 namespace TMS.Domain.Entities;
+       8 /// <summary>
+       9 /// A work item that can be created, assigned, tra
+         cked, updated and soft-deleted.
+      10 /// </summary>
+     … +38 lines (ctrl+o to expand)
+
+● Write(src\TMS.Domain\Entities\User.cs)
+  ⎿  Wrote 19 lines to src\TMS.Domain\Entities\User.cs
+       2 using TMS.Domain.Common;
+       3 namespace TMS.Domain.Entities;
+       4 
+       5 /// <summary>
+       6 /// Application user. Used exclusively for authent
+       7 /// Has no relationship to <see cref="TaskItem"/> 
+         (task assignment is free-text).
+       8 /// </summary>
+       9 public class User : BaseEntity
+      10 {
+     … +16 lines (ctrl+o to expand)
+
+● Now removing the .gitkeep placeholders from the now-populated
+  folders and verifying the Domain project compiles.
+
+● PowerShell(Set-Location
+            "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            Remove-Item -Force "src\TMS.Domain\Entities\.gitkeep",
+            "src\TMS.Domain\Enums\.git…)
+  ⎿    Determining projects to restore...
+       All projects are up-to-date for restore.
+       TMS.Domain -> C:\Users\Prashant\OneDrive\Desktop\Litmo
+     … +11 lines (ctrl+o to expand)
+
+● Domain layer compiles clean — 0 warnings, 0 errors.
+
+  What was generated
+
+  src/TMS.Domain/
+  ├── Common/BaseEntity.cs       (Id, CreatedAt)
+  ├── Enums/TaskStatus.cs        (ToDo=0, InProgress=1, Done=2)
+  ├── Enums/TaskPriority.cs      (Low=0, Medium=1, High=2,
+  Critical=3)
+  └── Entities/
+      ├── TaskItem.cs
+      └── User.cs
+
+  TaskItem: Id, CreatedAt (from base), Title, Description?,
+  Status, Priority, AssignedTo?, IsDeleted, UpdatedAt?
+  User: Id, CreatedAt (from base), Username, PasswordHash, Role
+
+  Design decisions explained
+
+  1. BaseEntity abstract base — both entities share Id +
+  CreatedAt, so I lifted them into Common/BaseEntity.cs (matches
+  the approved structure). UpdatedAt stays on TaskItem only, since
+  users aren't edited the same way. If you'd rather have flat,
+  self-contained entities with no base class, I can inline these.
+  2. TaskStatus name collides with the BCL —
+  System.Threading.Tasks.TaskStatus is pulled in globally by
+  ImplicitUsings. The spec requires the name TaskStatus, so I kept
+  it and added a using TaskStatus = TMS.Domain.Enums.TaskStatus;
+  alias in TaskItem.cs to disambiguate. This is the cleanest fix
+  without renaming.
+  3. AssignedTo is string?, no FK — exactly as you locked:
+  free-text, zero relationship to User. Documented inline so the
+  intent survives.
+  4. Nullability — with Nullable enabled, required strings (Title,
+  Username, PasswordHash) are initialized to string.Empty
+  (non-null contract); genuinely optional fields (Description,
+  AssignedTo, UpdatedAt) are ?.
+  5. Sensible defaults — Status = ToDo and Priority = Medium so a
+  freshly constructed task is in a valid starting state. Role =
+  "User" as a safe default (the seeded admin will set "Admin"
+  explicitly). These are pure in-memory defaults, no
+  behavior/business logic. Tell me if you'd prefer no defaults
+  (bare enum 0).
+  6. Kept the Domain pure — no EF attributes, no data-annotation
+  validation, no methods. Constraints (max lengths, unique
+  username, soft-delete query filter) belong in EF configurations
+  later; request-validation belongs in the Application layer.
+  Nothing here references any framework.
+
+  No DTOs, repositories, services, controllers, or EF
+  configurations were created. Ready for the next layer when you
+  are.
+
+   Please review the Domain layer against PROJECT-SCOPE.md and the 
+  original assignment requirements. Change CreatedAt to           
+  CreatedDate and UpdatedAt to ModifiedDate so the entity names   
+  exactly match the assignment specification. Verify that         
+  TaskItem contains only: Id, Title, Description, Status,         
+  Priority, AssignedTo, CreatedDate, ModifiedDate, IsDeleted and  
+  also Verify that User remains independent from TaskItem with no 
+  relationship. Do not generate any other layer yet.              
+
+● I'll rename the timestamp properties, then verify both entities
+  against the spec. CreatedAt lives in BaseEntity (shared) and
+  UpdatedAt is on TaskItem.
+
+● Update(src\TMS.Domain\Common\BaseEntity.cs)
+  ⎿  Added 1 line, removed 1 line
+      10      public int Id { get; set; }
+      11  
+      12      /// <summary>UTC timestamp set when the entit
+          y is first created.</summary>
+      13 -    public DateTime CreatedAt { get; set; }      
+      13 +    public DateTime CreatedDate { get; set; }    
+      14  }
+
+● Update(src\TMS.Domain\Entities\TaskItem.cs)
+  ⎿  Added 1 line, removed 1 line
+      32      public bool IsDeleted { get; set; }
+      33  
+      34      /// <summary>UTC timestamp of the last update
+          ; null until first modified.</summary>
+      35 -    public DateTime? UpdatedAt { get; set; }     
+      35 +    public DateTime? ModifiedDate { get; set; }  
+      36  }
+
+● Now let me build to confirm the rename didn't break anything,
+  and confirm no other file referenced the old names.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● PowerShell(Set-Location
+            "C:\Users\Prashant\OneDrive\Desktop\Litmos\Task
+            Management System"
+            dotnet build src/TMS.Domain/TMS.Domain.csproj -v
+            minimal --nologo)
+  ⎿    Determining projects to restore...
+       All projects are up-to-date for restore.
+       TMS.Domain -> C:\Users\Prashant\OneDrive\Desktop\Litmo
+     … +11 lines (ctrl+o to expand)
+     
+● Renamed cleanly — no leftover references, Domain builds with 0 
+  warnings, 0 errors. Here's the review.
+    
+  Rename applied
+
+  - BaseEntity.CreatedAt → CreatedDate (inherited by both
+  entities)
+  - TaskItem.UpdatedAt → ModifiedDate
+
+  ✅ TaskItem — exact property set verified
+
+  ┌──────────────┬────────────┬─────────────────────────┐
+  │   Property   │   Source   │          Type           │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ Id           │ BaseEntity │ int                     │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ Title        │ TaskItem   │ string                  │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ Description  │ TaskItem   │ string?                 │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ Status       │ TaskItem   │ TaskStatus (int enum)   │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ Priority     │ TaskItem   │ TaskPriority (int enum) │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ AssignedTo   │ TaskItem   │ string?                 │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ CreatedDate  │ BaseEntity │ DateTime                │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ ModifiedDate │ TaskItem   │ DateTime?               │
+  ├──────────────┼────────────┼─────────────────────────┤
+  │ IsDeleted    │ TaskItem   │ bool                    │
+  └──────────────┴────────────┴─────────────────────────┘
+
+  Exactly the 9 properties you listed — no more, no less (counting
+  the two inherited from BaseEntity). No extra fields, no
+  navigation properties.
+
+  ✅ User — independent, no relationship
+
+  User has: Id, Username, PasswordHash, Role, CreatedDate. It
+  contains no TaskId, no TaskItem navigation property, and no
+  collection of tasks. TaskItem likewise has no User/UserId
+  reference. The two entities are fully decoupled — assignment is
+  carried by the free-text AssignedTo string only.
+
+  Review against project-scope.md
+
+  ┌────────────────────────────────┬──────────────────────────┐
+  │       Scope requirement        │          Status          │
+  ├────────────────────────────────┼──────────────────────────┤
+  │ Statuses: To Do / In Progress  │ ✅ TaskStatus ToDo=0,    │
+  │ / Done                         │ InProgress=1, Done=2     │
+  ├────────────────────────────────┼──────────────────────────┤
+  │ Priorities: Low / Medium /     │ ✅ TaskPriority 0–3      │
+  │ High / Critical                │                          │
+  ├────────────────────────────────┼──────────────────────────┤
+  │ int-based enums                │ ✅                       │
+  ├────────────────────────────────┼──────────────────────────┤
+  │ Task: status, priority,        │                          │
+  │ assignment, soft-delete        │ ✅                       │
+  │ tracking                       │                          │
+  ├────────────────────────────────┼──────────────────────────┤
+  │ Users: authentication &        │ ✅                       │
+  │ authorization                  │                          │
+  └────────────────────────────────┴──────────────────────────┘
+
+  One intentional deviation to flag: the scope lists "Task
+  Ownership" under the Users table's purpose, which implies a
+  Users↔Tasks link. Your explicit instruction overrides this —
+  ownership is represented by the free-text AssignedTo string with
+  no FK, and Users stays auth-only. The Domain reflects your
+  decision, not the scope's wording. Just confirming this is the
+  deliberate choice (it is, per the last few turns).
+
+  Only the Domain layer was touched. Nothing else generated.
+
+

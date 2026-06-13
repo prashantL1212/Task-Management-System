@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/node_modules
+**/dist
+frontend
+.git
+.gitignore
+**/*.user
+**/appsettings.*.local.json
+Prashant_Litmos_test
