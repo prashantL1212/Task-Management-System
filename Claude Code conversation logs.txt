@@ -11,68 +11,7 @@
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 
-! git init                                                                      
-  ⎿  Reinitialized existing Git repository in C:/Users/Prashant/OneDrive/De
-     sktop/Litmos/Task Management System/.git/
 
-! git clone https://github.com/prashantL1212/Prashant_Litmos_test.git           
-  ⎿  Cloning into 'Prashant_Litmos_test'...
-     warning: You appear to have cloned an empty repository.
-
-! git checkout -b master                                                        
-  ⎿  Switched to a new branch 'master'
-
-❯ /model                                                                        
-  ⎿  Set model to Opus 4.8 and saved as your default for new sessions
-
-! git branch                                                                    
-  ⎿  (Bash completed with no output)
-
-! git pull                                                                      
-  ⎿  There is no tracking information for the current branch.
-     Please specify which branch you want to merge with.
-     See git-pull(1) for details.
-     … +7 lines (ctrl+o to expand)
-
-! git pull origin master                                                        
-  ⎿  fatal: couldn't find remote ref master
-
-! git fetch origin                                                              
-  ⎿  (Bash completed with no output)
-
-! git branch -r                                                                 
-  ⎿  (Bash completed with no output)
-
-! git remote -v                                                                 
-  ⎿  origin     https://github.com/prashantL1212/Task-Management-System.git (fet
-     ch)
-     origin     https://github.com/prashantL1212/Task-Management-System.git (pus
-     h)
-
-! git push -u origin master                                                     
-  ⎿  error: src refspec master does not match any
-     error: failed to push some refs to 'https://github.com/prashantL1212/T
-     ask-Management-System.git'
-
-! git branch                                                                    
-  ⎿  * master
-
-!  git fetch origin                                                             
-  ⎿  (Bash completed with no output)
-
-! git status                                                                    
-  ⎿  On branch master
-     Your branch is up to date with 'origin/master'.
-     … +6 lines (ctrl+o to expand)
-
-! git push -u origin master                                                     
-  ⎿  branch 'master' set up to track 'origin/master'.
-     Everything up-to-date
-
-! git status                                                                    
-  ⎿  On branch master
-     Your branch is up to date with 'origin/master'.
-     … +6 lines (ctrl+o to expand)
 
 ❯ /init                                                                         
 

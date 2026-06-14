@@ -24,6 +24,17 @@ frontend/  React (Vite) SPA
 
 ## Run locally
 
+### Run both simultaneouly
+```bash
+cd frontend
+npm run dev:all
+```
+### Terminate the application 
+```
+To Terminate the application run by npm run dev:all 
+use ctrl+c two times so api and react will stop 
+```
+
 ### Backend
 ```bash
 dotnet build TaskManagementSystem.sln
