@@ -4,8 +4,9 @@ Full-stack task management: .NET 8 Clean Architecture API + React (Vite) SPA, ba
 SQL Server with EF Core Code-First migrations. See `project-scope.md` for requirements and
 `ARCHITECTURE.md` for the design decisions.
 
-> Status: **scaffolded** — solution structure, projects, references, packages, and config
-> are in place. Business logic is not yet implemented.
+Features a full task CRUD API (filtering, soft-delete, and a raw-SQL summary endpoint),
+JWT authentication, FluentValidation, a global exception handler, and a React dashboard with
+create/edit/delete, filtering, and priority colour-coding.
 
 ## Prerequisites
 
@@ -24,16 +25,25 @@ frontend/  React (Vite) SPA
 
 ## Run locally
 
-### Run both simultaneouly
+### Run both simultaneously (recommended)
 ```bash
 cd frontend
-npm run dev:all
+npm install        # first time only — installs frontend deps (including 'concurrently')
+npm run dev:all    # starts the API and the React app together
 ```
-### Terminate the application 
-```
-To Terminate the application run by npm run dev:all 
-use ctrl+c two times so api and react will stop 
-```
+
+Once running:
+
+| App          | URL                          |
+|--------------|------------------------------|
+| Frontend SPA | http://localhost:5173        |
+| API / Swagger| http://localhost:5210/swagger|
+
+**Default login:** `admin` / `Admin@123` (seeded automatically in Development).
+
+### Terminate the application
+The app started by `npm run dev:all` runs two processes (API + React).
+Press `Ctrl+C` twice in the terminal to stop both.
 
 ### Backend
 ```bash
@@ -64,7 +74,8 @@ Brings up three services:
 | sqlserver | localhost:1433 |
 
 `docker-compose.override.yml` runs the API in the Development environment so migrations
-apply and the seeder populates demo data inside the container.
+apply and the seeder populates demo data inside the container. Log in with the same default
+credentials: `admin` / `Admin@123`.
 
 ## Tests
 
